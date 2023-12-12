@@ -1,0 +1,483 @@
+---
+title: "NYPD Shootings"
+author: "McNealy, Samantha"
+date: "2023-12-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Analyses of Shooting Incidents in New York City
+
+The data set I will be using was found at <https://catalog.data.gov/dataset>. According tho the data.gov this data set lists every shooting incident that occurred in NYC from 2006 until its most recent update in 2023.
+
+To find out more information regarding the dataset please visit the website.
+
+## Packages
+
+I will include all packages used here in this section:
+
+```{r packages, message=FALSE}
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(forecast)
+```
+
+## Import Data
+
+I will start by importing my data set. For this project we are using the data set titled NYPD Shooting Incident Data (Historic) from <https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD>.
+
+Lets read in the data and see what we have.
+
+```{r import_data, message=FALSE}
+shooting_incidents <- read.csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+```
+
+## Tidy the data
+
+First lets view the data and decide what changes we should make.
+
+```{r view data}
+head(shooting_incidents)
+
+summary(shooting_incidents)
+```
+
+After viewing I have decided to remove some columns that I will not be using, change the format of the columns, change the name of some of the columns, and deal with the missing data.
+
+#### 1. Deleting columns
+
+There are currently 21 columns. I have decided to remove 11 columns: INCIDENT_KEY, LOC_OF_OCCUR_DESC, JURISDICTION_CODE, PRECINCT, LOC_CLASSFCTN_DESC, LOCATION_DESC, X_COORD_CD, Y_COORD_CD, Latitude, Longitude, and Lon_Lat.
+
+```{r remove columns}
+colnames(shooting_incidents)
+
+shooting_incidents <- shooting_incidents %>% select(-INCIDENT_KEY, -LOC_OF_OCCUR_DESC, -JURISDICTION_CODE, -PRECINCT, -LOC_CLASSFCTN_DESC, -PRECINCT, -LOCATION_DESC, -X_COORD_CD, -Y_COORD_CD, -Latitude, -Longitude, -Lon_Lat)
+
+head(shooting_incidents)
+```
+
+#### 2. Date & Time
+
+The column "OCCUR_DATE" is currently read as a character. In order to perform date specific operations I will change the class to make it into a date. I will also rename this column "date".
+
+```{r change date format and name}
+shooting_incidents$OCCUR_DATE <- mdy(shooting_incidents$OCCUR_DATE)
+
+names(shooting_incidents)[names(shooting_incidents) == "OCCUR_DATE"] <- "date"
+
+summary(shooting_incidents)
+```
+
+The column "OCCUR_TIME" is currently read as a character. It is currently in 2 different formats so I have decided to combine the date and time into one column called "datetime".
+
+```{r combine date and time}
+shooting_incidents <- shooting_incidents %>%
+     mutate(datetime = ymd(date) + hms(OCCUR_TIME))
+```
+
+Using the datetime that I just created I will create additional columns. Month, Day, and Year.
+
+```{r create year, month, and day columns}
+shooting_incidents <- shooting_incidents %>%
+  mutate(Year = year(datetime), Month = month(datetime), Day = day(datetime))
+```
+
+Next I will create additional columns weekday and weeknumber and view the changes made.
+
+```{r create weekday and weeknumber columns}
+shooting_incidents <- shooting_incidents %>%
+  mutate(Weekday = wday(datetime, label = TRUE), WeekNumber = week(datetime))
+
+head(shooting_incidents)
+```
+
+#### 3. Missing data
+
+As you saw when we viewed the data, there is currently data that is empty or missing. First let see how much data is missing and them decide what to do with it.
+
+```{r missing data}
+character_columns <- sapply(shooting_incidents, is.character)
+
+missing_counts <- shooting_incidents %>%
+  select(which(character_columns)) %>%
+  summarise_all(~sum(is.na(.) | . == ""))
+
+print(missing_counts)
+```
+
+As you see here the perpetrator data age group, sex, and race are missing a high rate of data. This is probably still an onging case. Because of this I have decided to remove these three columns of data.
+
+```{r remove perp info}
+shooting_incidents <- shooting_incidents %>%   
+  select(-PERP_AGE_GROUP, -PERP_SEX, -PERP_RACE)
+
+head(shooting_incidents)
+```
+
+#### 4. Rename Columns
+
+Next I will to is rename some columns to make the names more consistent.
+
+```{r rename columns}
+shooting_incidents <- shooting_incidents %>%
+  rename(boro = BORO, death = STATISTICAL_MURDER_FLAG, vic_age_group = VIC_AGE_GROUP, vic_sex = VIC_SEX, vic_race= VIC_RACE, Time = OCCUR_TIME)
+
+colnames(shooting_incidents)
+```
+
+#### 5. View data and modify
+
+Currently we have reduced our data set down to 13 columns. Now we will view some information in each of the columns to check for inconsistent data.
+
+```{r view date}
+value_counts1 <- table(shooting_incidents$vic_race)
+value_counts1
+
+value_counts2 <- table(shooting_incidents$vic_age_group)
+value_counts2
+
+value_counts3 <- table(shooting_incidents$vic_sex)
+value_counts3
+
+value_counts4 <- table(shooting_incidents$boro)
+value_counts4
+
+value_counts5 <- table(shooting_incidents$death)
+value_counts5
+
+value_counts6 <- table(shooting_incidents$Year)
+value_counts6
+
+value_counts7 <- table(shooting_incidents$Month)
+value_counts7
+
+value_counts8 <- table(shooting_incidents$Day)
+value_counts8
+
+value_counts9 <- table(shooting_incidents$WeekNumber)
+value_counts9
+
+value_counts10 <- table(shooting_incidents$Weekday)
+value_counts10
+```
+
+When looking at this data I have found one data entry error on the vic_age_group column. One age range is listed as '1022'. I don't want this to interfere with the data when comparing different age groups so I will change this value to 'UNKNOWN'. I will then confirm that the change has been made. Another thing worth to noting is that there are 11 shooting incidents where the victim sex is unknown. This could be due to data recording issues or these individuals do not fit into traditional male/female classification. For this reason I have decided to keep this data.
+
+```{r datat entry error}
+row_to_change <- which(shooting_incidents$vic_age_group == "1022")
+
+shooting_incidents$vic_age_group[row_to_change] <- "UNKNOWN"
+
+value_counts <- table(shooting_incidents$vic_age_group)
+value_counts
+```
+
+#### 6. Data types
+
+Currently the victim age group, race, and sex data type is 'character'. I will convert these to 'factor' as they contain a limited number of repeating categories. this conversion may enhance performance and usage.
+
+```{r change vic}
+shooting_incidents$vic_age_group <- as.factor(shooting_incidents$vic_age_group)
+
+shooting_incidents$vic_sex <- as.factor(shooting_incidents$vic_sex)
+
+shooting_incidents$vic_race <- as.factor(shooting_incidents$vic_race)
+
+column_classes <- sapply(shooting_incidents, class)
+
+print(column_classes)
+```
+
+The death column is currently formatted as 'character'. Because this contains binary values of true and false, we will convert it to a 'logical' type.
+
+```{r change death}
+shooting_incidents$death <- tolower(shooting_incidents$death) == "true"
+
+column_classes <- sapply(shooting_incidents, class)
+
+print(column_classes)
+```
+
+## Add Visualizations and Analysis
+
+#### 1. What are the proportion of shooting incidents that result in death?
+
+To find the proportion of shooting incidents that result in a death I will calculate the death proportion, create a new data frame for our death proportion in order to plot, and then plot this onto a graph.
+
+```{r proportion of incidents resulting in death}
+death_proportion <- table(shooting_incidents$death) / nrow(shooting_incidents)
+
+death_df <- as.data.frame(death_proportion)
+
+ggplot(death_df, aes(x = Var1, y = Freq, fill = Var1)) +
+  geom_bar(stat = "identity") +
+  ggtitle("Proportion of Shooting Incidents Resulting in Death") +
+  xlab("Death Occurred") +
+  ylab("Proportion") +
+  labs(fill = "Victim Death") + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+The graph shows that when a shooting incident occurs in one of these boroughs of New York that there is approximately a 20% chance of it ending in death.
+
+#### 2. Are certain boroughs more prone to shooting incidents or fatalities than others?
+
+In the results I will include a graph with the total number of shooting incidents and deaths within each borough. To do this first I will aggregate the data to count the total number of incidents and deaths in each borough. Then I will reshape the data in order for it to be plotted. Finally I will create a graph that shows both totals side by side for each category.
+
+```{r death by borough}
+aggregate_data <- shooting_incidents %>%
+  group_by(boro) %>%
+  summarize(total_incidents = n(),
+            deaths = sum(death, na.rm = TRUE))
+
+long_data <- pivot_longer(aggregate_data, cols = c(total_incidents, deaths), names_to = "Metric")
+
+ggplot(long_data, aes(x = boro, y = value, fill = Metric)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  ggtitle("Total Shooting Incidents and Deaths per Borough") +
+  xlab("Borough") +
+  ylab("Count") +
+  labs(fill = "") +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+```
+
+Looking at the results of this graph we can conclude that shooting incidents are more likely to occur in the Bronx and Brooklyn and less likely to occur in Staten island, followed by Manhattan, and then Queens.
+
+#### 3. Do victim demographics influence the likelihood of fatal outcomes in shooting incidents?
+
+In order to answer this question we will have to conduct an analysis for each demographic category. I will begin with an analysis by age group.
+
+```{r victims age}
+age_group_analysis <- shooting_incidents %>%
+  group_by(vic_age_group) %>%
+  summarize(total_incidents = n(),
+            deaths = sum(death, na.rm = TRUE),
+            death_rate = deaths / total_incidents * 100)
+
+ggplot(age_group_analysis, aes(x = vic_age_group, y = death_rate, fill = vic_age_group)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(sprintf("%.1f", death_rate), "%")), 
+            position = position_stack(vjust = 0.5), color = "white") +
+  ggtitle("Death Rate in Shooting Incidents by Victim Age Group") +
+  xlab("Victim Age Group") +
+  ylab("Death Rate (%)") +
+  labs(fill = "Victim Age Group") + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+In this graph we see how likely a victim is to die based on their age. Results show that the older the victim is the more likely they are to die from a shooting incident.
+
+Now lets conduct an analysis by victims sex.
+
+```{r victims sex}
+sex_analysis <- shooting_incidents %>%
+  group_by(vic_sex) %>%
+  summarize(total_incidents = n(),
+            deaths = sum(death, na.rm = TRUE),
+            death_rate = deaths / total_incidents * 100)
+
+ggplot(sex_analysis, aes(x = vic_sex, y = death_rate, fill = vic_sex)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(sprintf("%.1f", death_rate), "%")), 
+            position = position_stack(vjust = 0.5), color = "white") +
+  ggtitle("Death Rate in Shooting Incidents by Victim Sex") +
+  xlab("Victim Sex") +
+  ylab("Death Rate (%)") +
+  labs(fill = "Victim Sex") + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+In this graph we can see that female death rate in a shooting incident is 20.3% and male death rate in a shooting incident is 19.2% This could indicate that males may be involved in more shooting incidents, the incidents involving females are more likely to be fatal. I would like to note that there is a unknown victim sex column. As mentioned previously only 11 victims of shooting incidents were denoted as unknown. On our current graph we see that the death rate in a shooting incident for those individuals is 9.1%
+
+Now lets conduct an analysis by victims race.
+
+```{r victim race}
+race_analysis <- shooting_incidents %>%
+  group_by(vic_race) %>%
+  summarize(total_incidents = n(),
+            deaths = sum(death, na.rm = TRUE),
+            death_rate = deaths / total_incidents * 100)
+
+ggplot(race_analysis, aes(x = vic_race, y = death_rate, fill = vic_race)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(sprintf("%.1f", death_rate), "%")), 
+            position = position_stack(vjust = 0.5), color = "white") +
+  ggtitle("Death Rate in Shooting Incidents by Victim Race") +
+  xlab("Victim Race") +
+  ylab("Death Rate (%)") +
+  labs(fill = "Victim Race") + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+In this graph we can see that the death rate in shooting incidents for victims with the race of White is 27.4% and Asian/Pacific Islander is 25% are the highest. While the death rate in shooting incidents for victims with the race of American Indian/Alaskan native and unknown are the lowest. This leads to the next question.
+
+#### 4. Are the differences in victim race and death rates statistically significant?
+
+To answer this questions we will need to create a contingency table to count the number of deaths. and survivals for each race. Then we will perform a chi-squared test.
+
+```{r race and death rates}
+death_counts_by_race <- table(shooting_incidents$vic_race, shooting_incidents$death)
+
+chi_squared_test <- chisq.test(death_counts_by_race)
+
+print(chi_squared_test)
+```
+
+The results of the chi-squared test show a p-value of less than 0.05 which is considered statistically significant association between different victim races and the likelihood of death in shooting incidents. The value also suggests that the strength of this association is quite strong. In order to verify these results and control for other variables I will perform a logistical regression.
+
+#### 5. Are there other variables that could influence the likelihood of a fatal outcome?
+
+We will look at victim race, age group, and sex to see the relationship between the victims demographics and the likelihood of fatal outcomes in shooting incidents. The death column is currently a logical type of data so we will change this to be binary (1/0) instead of (TRUE/FALSE). Then we can run the regression and interpret our results.
+
+```{r logistical regression}
+shooting_incidents$death <- as.numeric(shooting_incidents$death)
+
+model = glm(death ~ vic_age_group + vic_sex + vic_race, family = "binomial", data = shooting_incidents)
+
+summary(model)
+```
+
+Interpretations of the results:
+
+-   **Race**: The racial categories do not have p-values below 0.05, suggesting that within this model, race is not a significant predictor of death in shooting incidents.
+
+-   **Age Group**: All age groups are statistically significant predictors of death from a shooting incident. As age increases there is a higher likelihood of death during a shooting incidence.
+
+-   **Sex**: The sex categories do not appear to be significant predictors in this model.
+
+#### 6. How has the number of deaths changed over time?
+
+Lets check out how the number of deaths has changed over time. First we have to aggregate the data to get number of deaths per year. We will call this yearly_deaths. We can do this by using death and Year columns. Using this we are able to create a graph showing the yearly trend.
+
+```{r yearly trends of death}
+yearly_deaths <- aggregate(death ~ Year, data = shooting_incidents, sum)
+
+ggplot(yearly_deaths, aes(x = Year, y = death)) +
+  geom_line() +
+  geom_point() +
+  ggtitle("Yearly Trend of Deaths in Shooting Incidents") +
+  xlab("Year") +
+  ylab("Number of Deaths")
+```
+
+While looking at the yearly trend of deaths in shooting incidents there is a noticeable decrease in deaths that starts in 2010 until 2019. I would like to further investigate this to see if any of the boroughs saw significant improvements during this time.
+
+#### 7. How has yearly trends affected each borough?
+
+First I will create subsets for each borough and aggregate the data by year for each borough to get the total number of deaths per year in each borough. Then I will use a line graph to visualize the trends over the years in each of the boroughs.
+
+```{r yearly trends by boro}
+borough_trends <- shooting_incidents %>%
+  group_by(boro, Year) %>%
+  summarize(deaths = sum(death))
+
+ggplot(borough_trends, aes(x = Year, y = deaths, color = boro)) +
+  geom_line() +
+  labs(title = "Yearly Trends of Deaths by Borough",
+       x = "Year",
+       y = "Number of Deaths") +
+  theme_minimal()
+```
+
+The results show that the boroughs all had some drops from 2010-2019. The largest drops were in the Bronx and Brooklyn. Given the drop from 2010 to 2019 I want to build a forecast model to see if how each borough will progress over the next few years.
+
+## Forecast Model
+
+We will build a forecast model to predict future deaths in each borough. To do this I have used the ARIMA model. First I will prepare the data by converting to a time series format. Then I will fit the model with auto.arima so it can automatically choose the best model. Next I will use the fitted model to forecast the future values. Finally I will plot the values. I will do this with each of the 5 boroughs.
+
+#### Bronx
+
+```{r bronx forecast model}
+bronx_ts <- ts(borough_trends$deaths[borough_trends$boro == "BRONX"], start = c(2006), frequency = 1)
+
+bronx_arima <- auto.arima(bronx_ts)
+
+bronx_forecast <- forecast(bronx_arima, h = 5)
+
+plot(bronx_forecast)
+
+print(bronx_forecast)
+```
+
+#### Brooklyn
+
+```{r brooklyn forecast model}
+brooklyn_ts <- ts(borough_trends$deaths[borough_trends$boro == "BROOKLYN"], start = c(2006), frequency = 1)
+
+brooklyn_arima <- auto.arima(brooklyn_ts)
+
+brooklyn_forecast <- forecast(brooklyn_arima, h = 5)
+
+plot(brooklyn_forecast)
+
+print(brooklyn_forecast)
+```
+
+#### Manhattan
+
+```{r manhattan forecast model}
+manhattan_ts <- ts(borough_trends$deaths[borough_trends$boro == "MANHATTAN"], start = c(2006), frequency = 1)
+
+manhattan_arima <- auto.arima(manhattan_ts)
+
+manhattan_forecast <- forecast(manhattan_arima, h = 5)
+
+plot(manhattan_forecast)
+
+print(manhattan_forecast)
+```
+
+#### Queens
+
+```{r queens forecast model}
+queens_ts <- ts(borough_trends$deaths[borough_trends$boro == "QUEENS"], start = c(2006), frequency = 1)
+
+queens_arima <- auto.arima(queens_ts)
+
+queens_forecast <- forecast(queens_arima, h = 5)
+
+plot(queens_forecast)
+
+print(queens_forecast)
+```
+
+#### Staten Island
+
+```{r staten island forecast model}
+staten_island_ts <- ts(borough_trends$deaths[borough_trends$boro == "STATEN ISLAND"], start = c(2006), frequency = 1)
+
+staten_island_arima <- auto.arima(staten_island_ts)
+
+staten_island_forecast <- forecast(staten_island_arima, h = 5)
+
+plot(staten_island_forecast)
+
+print(staten_island_forecast)
+```
+
+## Bias Identification
+
+1.  Data Collection Bias
+    -   Its important to note that if this data was collected by police reports it may have biases based on an officers perception.
+
+```{=html}
+<!-- -->
+```
+2.  Variable Bias
+    -   I removed 11 different columns that did not initially seem important to me. I wanted to reduce the amount of data I would have to make working with the data set more efficient. Others may had seen this data as valuable and kept it.
+
+```{=html}
+<!-- -->
+```
+3.  Missing data bias
+    -   Due to the columns containing a lot of empty or blank entries I ended up removing 3 more different columns. These were perp age group, perp sex, and perp race. These 3 columns could had been used to made some discoveries such as seeing if there was a correlation between perp demographics and victime demographic.
